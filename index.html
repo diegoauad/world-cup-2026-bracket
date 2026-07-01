@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>World Cup 2026 — Knockout Simulator</title>
+<style>
+  :root{ --bg:#f2efe6; --ink:#20232a; --line:#3a3f4a; --accent:#c9a227; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;align-items:center;min-height:100%;
+  }
+  header{text-align:center;padding:18px 12px 4px}
+  header h1{margin:0;font-size:26px;letter-spacing:.5px;font-weight:800}
+  header p{margin:6px 0 0;font-size:13px;color:#6b6f78}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:12px 0 4px}
+  button{
+    font:inherit;font-size:13px;font-weight:600;cursor:pointer;
+    border:1px solid #cfc9ba;background:#fff;color:var(--ink);
+    padding:8px 14px;border-radius:20px;transition:.15s;
+  }
+  button:hover{background:#faf7ef;border-color:#b7ae98}
+  button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  button.primary:hover{background:#000}
+  .wrap{position:relative;width:min(94vw,880px);aspect-ratio:1/1;margin:4px auto 30px}
+  svg{width:100%;height:100%;display:block;overflow:visible}
+  .link{fill:none;stroke:var(--line);stroke-width:1.6}
+  .node{cursor:pointer}
+  .node circle.bg{fill:#fff;stroke:#cfc9ba;stroke-width:1.5;transition:.15s}
+  .node.pickable circle.bg{stroke:#b7ae98}
+  .node.pickable:hover circle.bg{stroke:var(--accent);stroke-width:3}
+  .node.empty circle.bg{fill:#e9e5da;stroke-dasharray:3 3}
+  .node.locked circle.bg{stroke:#8a8f79}
+  .champ circle.bg{stroke:var(--accent);stroke-width:4}
+  .tip{
+    position:fixed;pointer-events:none;background:#20232a;color:#fff;
+    padding:6px 10px;border-radius:6px;font-size:12px;opacity:0;transition:.1s;
+    transform:translate(-50%,-150%);white-space:nowrap;z-index:9;line-height:1.4;text-align:center;
+  }
+  .status{text-align:center;font-size:11.5px;color:#8a8f79;min-height:16px;margin-top:6px}
+  .champ-banner{text-align:center;font-weight:700;font-size:15px;min-height:22px;color:var(--accent)}
+  .mc{width:min(94vw,560px);margin:0 auto 26px}
+  .mc-head{font-weight:700;font-size:15px;text-align:center;margin-bottom:12px}
+  .mc-controls{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;margin-bottom:16px}
+  .mc-controls label{font-size:13px;color:#6b6f78;display:flex;gap:6px;align-items:center}
+  .mc-controls input{font:inherit;width:100px;padding:7px 9px;border:1px solid #cfc9ba;border-radius:8px;background:#fff}
+  .mc-status{font-size:12px;color:#8a8f79}
+  .mc-results{display:flex;flex-direction:column;gap:5px}
+  .mc-row{display:grid;grid-template-columns:26px 128px 1fr 52px;align-items:center;gap:9px;font-size:13px}
+  .mc-flag{width:22px;height:22px;border-radius:50%;border:1px solid #cfc9ba}
+  .mc-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mc-bar{height:14px;background:#e9e5da;border-radius:7px;overflow:hidden}
+  .mc-fill{height:100%;background:linear-gradient(90deg,#c9a227,#e0be4b);border-radius:7px}
+  .mc-pct{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:#3a3f4a}
+  .legend{font-size:12px;color:#6b6f78;text-align:center;max-width:660px;padding:0 16px 30px}
+</style>
+</head>
+<body>
+<header>
+  <h1>World Cup 2026</h1>
+  <p>Real Round-of-32 bracket · completed results are locked, click flags to advance the rest</p>
+</header>
+
+<div class="toolbar">
+  <button class="primary" id="sim">⚽ Simulate remaining matches</button>
+  <button id="reset">↺ Reset to actual results</button>
+  <button id="refresh">🔄 Refresh live results</button>
+</div>
+<div class="status" id="status"></div>
+<div class="champ-banner" id="banner"></div>
+
+<div class="wrap">
+  <svg id="bracket" viewBox="0 0 900 900" aria-label="World Cup 2026 knockout bracket"></svg>
+</div>
+
+<div class="mc">
+  <div class="mc-head">Monte Carlo — how often does each team win the cup?</div>
+  <div class="mc-controls">
+    <label>Simulations
+      <input id="mcCount" type="number" value="10000" min="1" max="1000000" step="1000">
+    </label>
+    <button class="primary" id="mcRun">▶ Run</button>
+    <span class="mc-status" id="mcStatus"></span>
+  </div>
+  <div class="mc-results" id="mcResults"></div>
+</div>
+
+<div class="legend">
+  The 32 real qualifiers, seeded in their true bracket positions. Seven Round-of-32 games are already
+  decided (greyed borders, fixed). Click any flag in an undecided matchup to send it inward one round —
+  or hit “Simulate” to resolve every remaining game with probabilities from World Football Elo ratings
+  (eloratings.net) plus a bit of upset luck. Hover a flag for the round and, where played, the score.
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+/* ---------------- Real 32 qualifiers in bracket (leaf) order ----------------
+   Each consecutive pair is a Round-of-32 match, ordered top->bottom of the tree. */
+// strength = World Football Elo rating (eloratings.net snapshot, Jul 2026)
+const LEAVES = [
+  // QF1 region
+  ["Canada","ca",1764],      ["South Africa","za",1559],
+  ["Netherlands","nl",1971], ["Morocco","ma",1886],
+  ["Germany","de",1908],     ["Paraguay","py",1823],
+  ["France","fr",2134],      ["Sweden","se",1731],
+  // QF2 region
+  ["Brazil","br",2031],      ["Japan","jp",1888],
+  ["Norway","no",1934],      ["Ivory Coast","ci",1727],
+  ["Mexico","mx",1943],      ["Ecuador","ec",1871],
+  ["England","gb-eng",2038], ["DR Congo","cd",1712],
+  // QF3 region
+  ["Spain","es",2144],       ["Austria","at",1836],
+  ["Portugal","pt",1990],    ["Croatia","hr",1905],
+  ["Belgium","be",1884],     ["Senegal","sn",1842],
+  ["USA","us",1781],         ["Bosnia & Herz.","ba",1622],
+  // QF4 region
+  ["Australia","au",1800],   ["Egypt","eg",1742],
+  ["Argentina","ar",2148],   ["Cape Verde","cv",1622],
+  ["Switzerland","ch",1914], ["Algeria","dz",1785],
+  ["Colombia","co",2004],    ["Ghana","gh",1575],
+].map(([name,code,strength])=>({name,code,strength}));
+
+/* Embedded snapshot of Round-of-32 results, used as a fallback when live data
+   isn't available (offline, or a match the API hasn't resolved yet).
+   Keyed by match index (0..15 in leaf-pair order): winner name + display score. */
+const FALLBACK = {
+  0:{winner:"Canada",  score:"1–0"},
+  1:{winner:"Morocco", score:"1–1 (3–2 pens)"},
+  2:{winner:"Paraguay",score:"1–1 (4–3 pens)"},
+  3:{winner:"France",  score:"3–0"},
+  4:{winner:"Brazil",  score:"2–1"},
+  5:{winner:"Norway",  score:"2–1"},
+  6:{winner:"Mexico",  score:"2–0"},
+};
+/* Live results get merged over the fallback (see loadResults). */
+let ACTUAL = {...FALLBACK};
+
+/* Kickoff (absolute UTC) + venue for matches not yet played, keyed by
+   [tree round][node index]. Round 1 = the Round-of-32 games still to come;
+   rounds 2-5 are the pre-scheduled R16 / QF / SF / Final slots (venues and
+   dates are fixed even before the teams are known). Times are converted to
+   the viewer's local timezone at render. */
+const FIXTURES = {
+  1:{ // Round of 32 (remaining)
+    7 :{utc:"2026-07-01T16:00:00Z", venue:"Mercedes-Benz Stadium, Atlanta"},
+    8 :{utc:"2026-07-02T19:00:00Z", venue:"SoFi Stadium, Los Angeles"},
+    9 :{utc:"2026-07-02T23:00:00Z", venue:"BMO Field, Toronto"},
+    10:{utc:"2026-07-01T20:00:00Z", venue:"Lumen Field, Seattle"},
+    11:{utc:"2026-07-02T00:00:00Z", venue:"Levi's Stadium, Santa Clara"},
+    12:{utc:"2026-07-03T18:00:00Z", venue:"AT&T Stadium, Dallas"},
+    13:{utc:"2026-07-03T22:00:00Z", venue:"Hard Rock Stadium, Miami"},
+    14:{utc:"2026-07-03T03:00:00Z", venue:"BC Place, Vancouver"},
+    15:{utc:"2026-07-04T01:30:00Z", venue:"Arrowhead Stadium, Kansas City"},
+  },
+  2:{ // Round of 16
+    0:{utc:"2026-07-05T01:00:00Z", venue:"NRG Stadium, Houston"},
+    1:{utc:"2026-07-04T19:00:00Z", venue:"Lincoln Financial Field, Philadelphia"},
+    2:{utc:"2026-07-05T21:00:00Z", venue:"Estadio Azteca, Mexico City"},
+    3:{utc:"2026-07-06T00:00:00Z", venue:"MetLife Stadium, New York/New Jersey"},
+    4:{utc:"2026-07-06T22:00:00Z", venue:"Levi's Stadium, San Francisco Bay"},
+    5:{utc:"2026-07-07T03:00:00Z", venue:"Lumen Field, Seattle"},
+    6:{utc:"2026-07-07T22:00:00Z", venue:"BC Place, Vancouver"},
+    7:{utc:"2026-07-08T03:00:00Z", venue:"BC Place, Vancouver"},
+  },
+  3:{ // Quarter-finals
+    0:{utc:"2026-07-09T19:00:00Z", venue:"Gillette Stadium, Boston"},
+    1:{utc:"2026-07-10T22:00:00Z", venue:"SoFi Stadium, Los Angeles"},
+    2:{utc:"2026-07-11T19:00:00Z", venue:"Hard Rock Stadium, Miami"},
+    3:{utc:"2026-07-12T01:00:00Z", venue:"Arrowhead Stadium, Kansas City"},
+  },
+  4:{ // Semi-finals
+    0:{utc:"2026-07-15T01:00:00Z", venue:"AT&T Stadium, Dallas"},
+    1:{utc:"2026-07-16T00:00:00Z", venue:"Mercedes-Benz Stadium, Atlanta"},
+  },
+  5:{ // Final
+    0:{utc:"2026-07-19T21:00:00Z", venue:"MetLife Stadium, New York/New Jersey"},
+  },
+};
+const getFixture=(r,i)=> (FIXTURES[r] && FIXTURES[r][i]) || null;
+
+/* Format an ISO kickoff in the browser's local timezone (with its tz abbreviation). */
+function fmtKickoff(iso){
+  const d=new Date(iso);
+  if(isNaN(d)) return iso;
+  return d.toLocaleString(undefined,{
+    weekday:"short", month:"short", day:"numeric",
+    hour:"numeric", minute:"2-digit", timeZoneName:"short"
+  });
+}
+
+const ROUND_NAMES = ["Round of 32","Round of 16","Quarter-final","Semi-final","Final","Champion"];
+const RADII = [352,282,208,132,64,0];
+const NODE_R = [23,24,26,28,31,40];
+const CX=450, CY=450;
+
+let nodes = [];
+
+function buildBracket(){
+  nodes=[];
+  const counts=[32,16,8,4,2,1];
+  for(let r=0;r<6;r++){
+    nodes[r]=[];
+    for(let i=0;i<counts[r];i++){
+      nodes[r][i]={round:r,idx:i,team:r===0?LEAVES[i]:null,locked:false,angle:0,x:0,y:0};
+    }
+  }
+  // angles — offset by half a step so the split between the two halves is
+  // vertical (top/bottom) and the two finalists sit horizontally (0° / 180°)
+  const step=360/32;
+  for(let i=0;i<32;i++) nodes[0][i].angle = -90 + step/2 + i*step;
+  for(let r=1;r<6;r++)
+    for(const n of nodes[r])
+      n.angle=(nodes[r-1][n.idx*2].angle+nodes[r-1][n.idx*2+1].angle)/2;
+  // xy
+  for(let r=0;r<6;r++)
+    for(const n of nodes[r]){
+      const rad=n.angle*Math.PI/180;
+      n.x=CX+RADII[r]*Math.cos(rad);
+      n.y=CY+RADII[r]*Math.sin(rad);
+    }
+  applyActual();
+}
+
+function teamByName(name){ return LEAVES.find(t=>t.name===name); }
+
+function applyActual(){
+  for(const [mi,res] of Object.entries(ACTUAL)){
+    const parent=nodes[1][+mi];
+    parent.team=teamByName(res.winner);
+    parent.locked=true;
+    parent.score=res.score;
+  }
+}
+
+/* ---------------- interaction ---------------- */
+function setWinner(r,i){
+  if(r>=5) return;
+  const team=nodes[r][i].team;
+  if(!team) return;
+  const parent=nodes[r+1][i>>1];
+  if(parent.locked) return;
+  if(parent.team===team) return;
+  parent.team=team;
+  let cur=parent;
+  while(cur.round<5){
+    const up=nodes[cur.round+1][cur.idx>>1];
+    if(up.locked||!up.team) break;
+    up.team=null; cur=up;
+  }
+  render();
+}
+
+function resetPicks(){
+  for(let r=1;r<6;r++) for(const n of nodes[r]){ n.team=null; n.locked=false; n.score=undefined; }
+  applyActual();
+  render();
+}
+
+/* ---------------- live results (TheSportsDB, FIFA World Cup = league 4429) ---------------- */
+const API_URL="https://www.thesportsdb.com/api/v1/json/3/eventsseason.php?id=4429&s=2026";
+// normalise the API's country names to the ones used in this bracket
+const NAME_ALIASES={
+  "United States":"USA","US":"USA",
+  "Côte d'Ivoire":"Ivory Coast","Cote d'Ivoire":"Ivory Coast",
+  "Congo DR":"DR Congo","Democratic Republic of the Congo":"DR Congo","Congo":"DR Congo",
+  "Korea Republic":"South Korea","South Korea":"South Korea",
+  "Cabo Verde":"Cape Verde",
+  "Bosnia and Herzegovina":"Bosnia & Herz.","Bosnia-Herzegovina":"Bosnia & Herz.",
+  "Czechia":"Czech Republic",
+};
+const norm=n=>NAME_ALIASES[n]||n;
+// map each R32 tie (by its unordered pair of team names) to its match index
+const MATCH_BY_PAIR={};
+for(let i=0;i<16;i++)
+  MATCH_BY_PAIR[[LEAVES[i*2].name,LEAVES[i*2+1].name].sort().join(" | ")]=i;
+
+function setStatus(state,n){
+  const el=document.getElementById("status");
+  if(state==="loading") el.textContent="↻ fetching live results…";
+  else if(state==="live") el.textContent=`● live results (${n} synced from TheSportsDB)`;
+  else if(state==="offline") el.textContent="○ offline — showing embedded snapshot";
+}
+
+async function loadResults(){
+  setStatus("loading");
+  try{
+    const res=await fetch(API_URL,{cache:"no-store"});
+    if(!res.ok) throw new Error(res.status);
+    const evs=(await res.json()).events||[];
+    const merged={...FALLBACK};
+    let applied=0;
+    for(const e of evs){
+      const hs=e.intHomeScore, as=e.intAwayScore;
+      if(hs==null||as==null||hs===""||as==="") continue;      // not finished
+      const home=norm(e.strHomeTeam), away=norm(e.strAwayTeam);
+      const mi=MATCH_BY_PAIR[[home,away].sort().join(" | ")];
+      if(mi==null) continue;                                   // not one of our R32 ties
+      const h=+hs, a=+as;
+      if(h===a) continue;                                      // penalties unresolved via free API
+      const winner=h>a?home:away;
+      merged[mi]={winner, score:h>a?`${h}–${a}`:`${a}–${h}`};
+      applied++;
+    }
+    ACTUAL=merged;
+    resetPicks();                     // re-applies ACTUAL and re-renders
+    setStatus("live",applied);
+  }catch(err){
+    ACTUAL={...FALLBACK};
+    setStatus("offline");
+  }
+}
+
+/* ---------------- simulation ---------------- */
+// standard Elo win expectation: 400-point gap ≈ 91%, equal ratings = 50%
+function winProb(a,b){ return 1/(1+Math.pow(10,-(a.strength-b.strength)/400)); }
+function simulate(){
+  for(let r=0;r<5;r++){
+    for(const parent of nodes[r+1]){
+      if(parent.locked) continue;             // keep real results
+      const a=nodes[r][parent.idx*2].team, b=nodes[r][parent.idx*2+1].team;
+      if(!a||!b){parent.team=null;continue;}
+      parent.team = Math.random()<winProb(a,b) ? a : b;
+    }
+  }
+  render();
+}
+
+/* One headless run: keep the real (locked) R32 results, randomise everything
+   else, return the champion. Doesn't touch the DOM. */
+function simulateOnce(){
+  let cur=new Array(16);
+  for(let m=0;m<16;m++){
+    if(ACTUAL[m]) cur[m]=teamByName(ACTUAL[m].winner);
+    else{ const a=LEAVES[m*2], b=LEAVES[m*2+1]; cur[m]=Math.random()<winProb(a,b)?a:b; }
+  }
+  while(cur.length>1){
+    const next=[];
+    for(let i=0;i<cur.length;i+=2){
+      const a=cur[i], b=cur[i+1];
+      next.push(Math.random()<winProb(a,b)?a:b);
+    }
+    cur=next;
+  }
+  return cur[0];
+}
+
+/* Monte Carlo: run N times, tally championships, render a sorted bar chart. */
+function runMonteCarlo(){
+  const inp=document.getElementById("mcCount");
+  const n=Math.max(1,Math.min(1000000, parseInt(inp.value,10)||0));
+  inp.value=n;
+  const status=document.getElementById("mcStatus");
+  const out=document.getElementById("mcResults");
+  status.textContent="running…"; out.innerHTML="";
+  setTimeout(()=>{
+    const counts=new Map();
+    for(let k=0;k<n;k++){
+      const c=simulateOnce();
+      counts.set(c.name,(counts.get(c.name)||0)+1);
+    }
+    const rows=[...counts.entries()]
+      .map(([name,c])=>({team:teamByName(name),c}))
+      .sort((a,b)=>b.c-a.c);
+    const max=rows[0].c;
+    out.innerHTML=rows.map(r=>`
+      <div class="mc-row">
+        <img class="mc-flag" src="${flagUrl(r.team.code)}" alt="">
+        <span class="mc-name">${r.team.name}</span>
+        <div class="mc-bar"><div class="mc-fill" style="width:${(r.c/max*100).toFixed(1)}%"></div></div>
+        <span class="mc-pct">${(r.c/n*100).toFixed(1)}%</span>
+      </div>`).join("");
+    status.textContent=`${n.toLocaleString()} runs · ${rows.length} different champions`;
+  },20);
+}
+
+/* ---------------- render ---------------- */
+const SVGNS="http://www.w3.org/2000/svg";
+const svg=document.getElementById("bracket");
+const tip=document.getElementById("tip");
+const banner=document.getElementById("banner");
+// pre-made circular flags (square viewBox) — no cropping needed, no distortion
+const flagUrl=code=>`https://cdn.jsdelivr.net/gh/HatScripts/circle-flags/flags/${code}.svg`;
+
+function render(){
+  svg.innerHTML="";
+
+  for(let r=1;r<6;r++) for(const parent of nodes[r])
+    for(const ci of [parent.idx*2, parent.idx*2+1]){
+      const child=nodes[r-1][ci];
+      const line=document.createElementNS(SVGNS,"path");
+      line.setAttribute("class","link");
+      line.setAttribute("d",`M${child.x},${child.y} L${parent.x},${parent.y}`);
+      svg.appendChild(line);
+    }
+
+  for(let r=0;r<6;r++) for(const n of nodes[r]){
+    const g=document.createElementNS(SVGNS,"g");
+    const fx=getFixture(r,n.idx);
+    let cls="node";
+    const isChamp=r===5;
+    if(isChamp) cls+=" champ";
+    if(!n.team) cls+=" empty";
+    if(n.locked) cls+=" locked";
+    const pickable=n.team && r<5 && !nodes[r+1][n.idx>>1].locked;
+    if(pickable) cls+=" pickable";
+    g.setAttribute("class",cls);
+
+    const bg=document.createElementNS(SVGNS,"circle");
+    bg.setAttribute("class","bg");
+    bg.setAttribute("cx",n.x);bg.setAttribute("cy",n.y);bg.setAttribute("r",NODE_R[r]);
+    g.appendChild(bg);
+
+    if(n.team){
+      const img=document.createElementNS(SVGNS,"image");
+      img.setAttribute("href",flagUrl(n.team.code));
+      img.setAttribute("x",n.x-(NODE_R[r]-2));img.setAttribute("y",n.y-(NODE_R[r]-2));
+      img.setAttribute("width",(NODE_R[r]-2)*2);img.setAttribute("height",(NODE_R[r]-2)*2);
+      g.appendChild(img);
+    } else if(isChamp){
+      const t=document.createElementNS(SVGNS,"text");
+      t.setAttribute("x",n.x);t.setAttribute("y",n.y);
+      t.setAttribute("text-anchor","middle");t.setAttribute("dominant-baseline","central");
+      t.setAttribute("font-size","34");t.textContent="🏆";
+      g.appendChild(t);
+    }
+
+    if(pickable) g.addEventListener("click",()=>setWinner(r,n.idx));
+
+    // tooltip content: teams show name+round; an undecided R32 slot (empty
+    // round-1 node) shows the fixture to be decided, at that slot's position.
+    let tipHtml=null;
+    if(n.team){
+      tipHtml=`${n.team.name} · ${ROUND_NAMES[r]}`;
+      if(n.locked&&n.score) tipHtml+=`<br>won ${n.score}`;
+    } else if(fx){
+      const a=nodes[r-1][n.idx*2].team, b=nodes[r-1][n.idx*2+1].team;
+      let head, foot;
+      if(a&&b){
+        head=`<b>${a.name}</b> vs <b>${b.name}</b>`;
+        const pa=winProb(a,b), pb=1-pa;
+        const q=p=>`${Math.round(p*100)}% <span style="opacity:.55">(${(1/p).toFixed(2)})</span>`;
+        foot=`${a.name} ${q(pa)} &nbsp;·&nbsp; ${b.name} ${q(pb)}`
+            +`<br><span style="opacity:.5">model odds to advance · Elo</span>`;
+      } else {
+        head=`${ROUND_NAMES[r-1]} · teams TBD`;
+        foot=`<span style="opacity:.65">winner to be decided</span>`;
+      }
+      tipHtml=`${head}<br>${fmtKickoff(fx.utc)}<br>${fx.venue}<br>${foot}`;
+    }
+    if(tipHtml){
+      g.addEventListener("mousemove",e=>{
+        tip.innerHTML=tipHtml;
+        tip.style.left=e.clientX+"px";tip.style.top=e.clientY+"px";tip.style.opacity=1;
+      });
+      g.addEventListener("mouseleave",()=>tip.style.opacity=0);
+    }
+    svg.appendChild(g);
+  }
+
+  const champ=nodes[5][0].team;
+  banner.textContent = champ ? `🏆 Champions: ${champ.name}` : "";
+}
+
+document.getElementById("sim").addEventListener("click",simulate);
+document.getElementById("reset").addEventListener("click",resetPicks);
+document.getElementById("refresh").addEventListener("click",loadResults);
+document.getElementById("mcRun").addEventListener("click",runMonteCarlo);
+
+buildBracket();
+render();
+loadResults();   // pull live results, fall back to the embedded snapshot
+</script>
+</body>
+</html>
