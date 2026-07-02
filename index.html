@@ -260,8 +260,18 @@ function resetPicks(){
   render();
 }
 
-/* ---------------- live results (TheSportsDB, FIFA World Cup = league 4429) ---------------- */
-const API_URL="https://www.thesportsdb.com/api/v1/json/3/eventsseason.php?id=4429&s=2026";
+/* ---------------- live results (ESPN's public scoreboard feed, no key required) ---------------- */
+// Date window derived from the Round-of-32 fixture list above (FIXTURES[1]) rather
+// than hard-coded, so it stays correct for the whole knockout window without edits.
+function espnDateRange(){
+  const dates=Object.values(FIXTURES[1]).map(f=>new Date(f.utc));
+  const pad=d=>String(d).padStart(2,"0");
+  const fmt=d=>`${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}`;
+  const start=new Date(Math.min(...dates)); start.setUTCDate(start.getUTCDate()-2);
+  const end=new Date(Math.max(...dates)); end.setUTCDate(end.getUTCDate()+1);
+  return `${fmt(start)}-${fmt(end)}`;
+}
+const API_URL=`https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=${espnDateRange()}`;
 // normalise the API's country names to the ones used in this bracket
 const NAME_ALIASES={
   "United States":"USA","US":"USA",
@@ -281,7 +291,7 @@ for(let i=0;i<16;i++)
 function setStatus(state,n){
   const el=document.getElementById("status");
   if(state==="loading") el.textContent="↻ fetching live results…";
-  else if(state==="live") el.textContent=`● live results (${n} synced from TheSportsDB)`;
+  else if(state==="live") el.textContent=`● live results (${n} synced from ESPN)`;
   else if(state==="offline") el.textContent="○ offline — showing embedded snapshot";
 }
 
@@ -294,15 +304,22 @@ async function loadResults(){
     const merged={...FALLBACK};
     let applied=0;
     for(const e of evs){
-      const hs=e.intHomeScore, as=e.intAwayScore;
-      if(hs==null||as==null||hs===""||as==="") continue;      // not finished
-      const home=norm(e.strHomeTeam), away=norm(e.strAwayTeam);
-      const mi=MATCH_BY_PAIR[[home,away].sort().join(" | ")];
+      const comp=e.competitions&&e.competitions[0];
+      if(!comp||!comp.status.type.completed) continue;         // not finished
+      const home=comp.competitors.find(c=>c.homeAway==="home");
+      const away=comp.competitors.find(c=>c.homeAway==="away");
+      if(!home||!away) continue;
+      const hn=norm(home.team.displayName), an=norm(away.team.displayName);
+      const mi=MATCH_BY_PAIR[[hn,an].sort().join(" | ")];
       if(mi==null) continue;                                   // not one of our R32 ties
-      const h=+hs, a=+as;
-      if(h===a) continue;                                      // penalties unresolved via free API
-      const winner=h>a?home:away;
-      merged[mi]={winner, score:h>a?`${h}–${a}`:`${a}–${h}`};
+      if(!home.winner&&!away.winner) continue;                 // draw, shouldn't happen in a knockout
+      const w=home.winner?home:away, l=home.winner?away:home;
+      const wh=+w.score, wl=+l.score;
+      let score=`${wh}–${wl}`;
+      const detail=comp.status.type.detail;
+      if(detail==="FT-Pens") score+=` (${w.shootoutScore}–${l.shootoutScore} pens)`;
+      else if(detail==="AET") score+=" (aet)";
+      merged[mi]={winner:norm(w.team.displayName), score};
       applied++;
     }
     ACTUAL=merged;
